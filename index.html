@@ -56,6 +56,16 @@
   .tag.green{background:#eef7ee;color:#2f7d32;}
   .name{font-size:15px;font-weight:700;}
   .desc{font-size:13px;color:var(--muted);line-height:1.5;}
+  .card .tag{cursor:pointer;padding:4px 10px;}
+  .filter{display:flex;align-items:center;gap:8px;padding:0 16px 10px;font-size:13px;color:var(--muted);}
+  .filter[hidden]{display:none;}
+  .chip{display:inline-flex;align-items:center;gap:8px;height:36px;padding:0 12px;border-radius:99px;
+        border:1px solid var(--accent);background:#eef4fb;color:var(--accent);font:inherit;font-weight:600;cursor:pointer;}
+  .sugg{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;}
+  .sugg button{height:32px;padding:0 10px;border-radius:6px;border:1px dashed var(--btn-line);
+        background:#fff;color:var(--muted);font:inherit;font-size:12.5px;cursor:pointer;}
+  .backup{display:flex;gap:8px;padding:8px 16px 28px;border-top:1px solid var(--line-soft);margin:0 16px;}
+  .backup .btn{height:44px;font-size:13px;color:var(--muted);background:var(--btn);}
   .empty{text-align:center;color:var(--muted);font-size:14px;line-height:1.6;padding:40px 16px;}
 
   /* edit sheet */
@@ -89,7 +99,17 @@
   <input id="q" type="search" placeholder="שם, תיאור או תגית">
 </div>
 <div class="count" id="count"></div>
+<div class="filter" id="filter" hidden>
+  מסונן לפי:
+  <button class="chip" id="clearTag" aria-label="בטל סינון"><span id="tagName"></span> ✕</button>
+</div>
 <main class="list" id="list"></main>
+
+<div class="backup">
+  <button class="btn" id="exportBtn">ייצוא גיבוי</button>
+  <button class="btn" id="importBtn">ייבוא גיבוי</button>
+  <input type="file" id="importFile" accept=".json,application/json" hidden>
+</div>
 
 <dialog id="dlg">
   <form class="sheet" id="form" method="dialog">
@@ -99,6 +119,7 @@
     <div class="field">
       <label for="fTags">תגיות</label><input id="fTags" placeholder="יין אדום, יבש">
       <small>מפרידים בפסיק</small>
+      <div class="sugg" id="sugg"></div>
     </div>
     <div class="row">
       <button type="button" class="btn del" id="delBtn">מחק</button>
@@ -114,6 +135,7 @@ const $ = id => document.getElementById(id);
 
 let items = load();
 let editId = null;
+let activeTag = null;
 
 function load(){
   try {
@@ -141,8 +163,12 @@ function tagClass(t){
 function render(){
   const q = $("q").value.trim().toLowerCase();
   const list = items.filter(it =>
-    !q || [it.name, it.desc, ...it.tags].join(" ").toLowerCase().includes(q)
+    (!activeTag || it.tags.includes(activeTag)) &&
+    (!q || [it.name, it.desc, ...it.tags].join(" ").toLowerCase().includes(q))
   );
+
+  $("filter").hidden = !activeTag;
+  $("tagName").textContent = activeTag || "";
 
   $("count").textContent = list.length + " פריטים";
 
@@ -151,14 +177,14 @@ function render(){
     return;
   }
   if (!list.length){
-    $("list").innerHTML = '<div class="empty">לא נמצא פריט שמתאים ל"' + esc(q) + '"</div>';
+    $("list").innerHTML = '<div class="empty">לא נמצאו פריטים</div>';
     return;
   }
 
   $("list").innerHTML = list.map(it => `
     <button class="card" data-id="${it.id}">
       <div class="body">
-        ${it.tags.length ? `<div class="tags">${it.tags.map(t => `<span class="${tagClass(t)}">${esc(t)}</span>`).join("")}</div>` : ""}
+        ${it.tags.length ? `<div class="tags">${it.tags.map(t => `<span class="${tagClass(t)}" data-tag="${esc(t)}">${esc(t)}</span>`).join("")}</div>` : ""}
         <div class="name">${esc(it.name)}</div>
         ${it.desc ? `<div class="desc">${esc(it.desc)}</div>` : ""}
       </div>
@@ -173,6 +199,7 @@ function openEdit(id){
   $("fDesc").value = it.desc;
   $("fTags").value = it.tags.join(", ");
   $("delBtn").style.display = id ? "" : "none";
+  renderSugg();
   $("dlg").showModal();
 }
 
@@ -196,9 +223,66 @@ $("cancelBtn").onclick = () => $("dlg").close();
 $("addBtn").onclick = () => openEdit(null);
 $("q").addEventListener("input", render);
 $("list").addEventListener("click", e => {
+  const tag = e.target.closest("[data-tag]");
+  if (tag){ activeTag = tag.dataset.tag; render(); scrollTo(0, 0); return; }
   const card = e.target.closest(".card");
   if (card) openEdit(Number(card.dataset.id));
 });
+$("clearTag").onclick = () => { activeTag = null; render(); };
+
+/* ---- tag suggestions ---- */
+function currentTags(){ return $("fTags").value.split(",").map(t => t.trim()).filter(Boolean); }
+function renderSugg(){
+  const used = currentTags();
+  const typing = ($("fTags").value.split(",").pop() || "").trim();
+  const all = [...new Set(items.flatMap(it => it.tags))];
+  const list = all.filter(t => !used.includes(t) && (!typing || t.includes(typing)));
+  $("sugg").innerHTML = list.map(t => `<button type="button" data-s="${esc(t)}">+ ${esc(t)}</button>`).join("");
+}
+$("fTags").addEventListener("input", renderSugg);
+$("sugg").addEventListener("click", e => {
+  const b = e.target.closest("[data-s]");
+  if (!b) return;
+  const parts = $("fTags").value.split(",").map(t => t.trim());
+  // replace the part being typed, or append
+  const last = parts[parts.length - 1];
+  if (last && !b.dataset.s.includes(last)) parts.push(b.dataset.s);
+  else parts[parts.length - 1] = b.dataset.s;
+  $("fTags").value = parts.filter(Boolean).join(", ") + ", ";
+  $("fTags").focus();
+  renderSugg();
+});
+
+/* ---- backup ---- */
+$("exportBtn").onclick = () => {
+  const blob = new Blob([JSON.stringify(items, null, 2)], { type: "application/json" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "bar-inventory-" + new Date().toISOString().slice(0, 10) + ".json";
+  a.click();
+  URL.revokeObjectURL(a.href);
+};
+$("importBtn").onclick = () => $("importFile").click();
+$("importFile").onchange = async e => {
+  const file = e.target.files[0];
+  e.target.value = "";
+  if (!file) return;
+  try {
+    const data = JSON.parse(await file.text());
+    if (!Array.isArray(data) || !data.every(x => x && typeof x.name === "string"))
+      throw new Error();
+    if (!confirm("הייבוא יחליף את הרשימה הנוכחית (" + items.length + " פריטים) ב־" + data.length + " פריטים. להמשיך?")) return;
+    items = data.map((x, i) => ({
+      id: x.id || Date.now() + i,
+      name: x.name,
+      desc: x.desc || "",
+      tags: Array.isArray(x.tags) ? x.tags.map(String) : []
+    }));
+    activeTag = null; save(); render();
+  } catch {
+    alert("הקובץ לא תקין");
+  }
+};
 
 render();
 </script>
