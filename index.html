@@ -52,8 +52,22 @@
   .body{flex:1;min-width:0;display:flex;flex-direction:column;gap:8px;}
   .tags{display:flex;gap:6px;flex-wrap:wrap;}
   .tag{font-size:11px;font-weight:600;padding:2px 8px;border-radius:4px;background:#eef4fb;color:var(--accent);}
-  .tag.red{background:#fdecea;color:#a5271b;}
-  .tag.green{background:#eef7ee;color:#2f7d32;}
+  .c-blue{background:#eef4fb;color:#0a6ebd;}
+  .c-red{background:#fdecea;color:#a5271b;}
+  .c-green{background:#eef7ee;color:#2f7d32;}
+  .c-orange{background:#fff1e0;color:#b35a00;}
+  .c-yellow{background:#fdf6d8;color:#8a6d00;}
+  .c-purple{background:#f3eefb;color:#6b3fa0;}
+  .c-pink{background:#fdeef5;color:#b0306a;}
+  .c-teal{background:#e6f6f4;color:#0f766e;}
+  .c-brown{background:#f4ede6;color:#7a4b2a;}
+  .c-gray{background:#f0f0f0;color:#555555;}
+  .crow{padding:12px 0;border-bottom:1px solid var(--line-soft);}
+  .crow .tag{display:inline-block;margin-bottom:10px;font-size:13px;}
+  .sw{display:flex;gap:8px;flex-wrap:wrap;}
+  .sw button{width:36px;height:36px;border-radius:8px;cursor:pointer;border:2px solid transparent;}
+  .sw button.on{border-color:var(--text);}
+  #colorList{max-height:60vh;overflow-y:auto;margin-bottom:12px;}
   .name{font-size:15px;font-weight:700;}
   .desc{font-size:13px;color:var(--muted);line-height:1.5;}
   .card .tag{cursor:pointer;padding:4px 10px;}
@@ -108,6 +122,7 @@
 <div class="backup">
   <button class="btn" id="exportBtn">ייצוא גיבוי</button>
   <button class="btn" id="importBtn">ייבוא גיבוי</button>
+  <button class="btn" id="colorsBtn">צבעי תגיות</button>
   <input type="file" id="importFile" accept=".json,application/json" hidden>
 </div>
 
@@ -127,6 +142,14 @@
       <button type="submit" class="btn primary">שמור</button>
     </div>
   </form>
+</dialog>
+
+<dialog id="colorDlg">
+  <div class="sheet">
+    <h2>צבעי תגיות</h2>
+    <div id="colorList"></div>
+    <div class="row"><button type="button" class="btn primary" id="colorDone">סיום</button></div>
+  </div>
 </dialog>
 
 <script>
@@ -153,12 +176,21 @@ function save(){ try { localStorage.setItem(KEY, JSON.stringify(items)); } catch
 
 const esc = s => String(s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 
-// tag color by keyword
-function tagClass(t){
-  if (t.includes("אדום")) return "tag red";
-  if (t.includes("לבן")) return "tag green";
-  return "tag";
+/* ---- tag colors ---- */
+const COLOR_KEY = "bar-inventory-tagcolors-v1";
+const PALETTE = ["blue", "red", "green", "orange", "yellow", "purple", "pink", "teal", "brown", "gray"];
+let tagColors = {};
+try { tagColors = JSON.parse(localStorage.getItem(COLOR_KEY)) || {}; } catch(e){}
+function saveColors(){ try { localStorage.setItem(COLOR_KEY, JSON.stringify(tagColors)); } catch(e){} }
+
+// chosen color, otherwise default by keyword
+function tagColor(t){
+  if (tagColors[t]) return tagColors[t];
+  if (t.includes("אדום")) return "red";
+  if (t.includes("לבן")) return "green";
+  return "blue";
 }
+function tagClass(t){ return "tag c-" + tagColor(t); }
 
 function render(){
   const q = $("q").value.trim().toLowerCase();
@@ -255,7 +287,7 @@ $("sugg").addEventListener("click", e => {
 
 /* ---- backup ---- */
 $("exportBtn").onclick = () => {
-  const blob = new Blob([JSON.stringify(items, null, 2)], { type: "application/json" });
+  const blob = new Blob([JSON.stringify({ items, tagColors }, null, 2)], { type: "application/json" });
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
   a.download = "bar-inventory-" + new Date().toISOString().slice(0, 10) + ".json";
@@ -268,7 +300,9 @@ $("importFile").onchange = async e => {
   e.target.value = "";
   if (!file) return;
   try {
-    const data = JSON.parse(await file.text());
+    const raw = JSON.parse(await file.text());
+    // supports old backups (plain array) and new ones ({items, tagColors})
+    const data = Array.isArray(raw) ? raw : raw && raw.items;
     if (!Array.isArray(data) || !data.every(x => x && typeof x.name === "string"))
       throw new Error();
     if (!confirm("הייבוא יחליף את הרשימה הנוכחית (" + items.length + " פריטים) ב־" + data.length + " פריטים. להמשיך?")) return;
@@ -278,11 +312,33 @@ $("importFile").onchange = async e => {
       desc: x.desc || "",
       tags: Array.isArray(x.tags) ? x.tags.map(String) : []
     }));
+    if (raw.tagColors && typeof raw.tagColors === "object"){ tagColors = raw.tagColors; saveColors(); }
     activeTag = null; save(); render();
   } catch {
     alert("הקובץ לא תקין");
   }
 };
+
+/* ---- color picker ---- */
+function renderColors(){
+  const tags = [...new Set(items.flatMap(it => it.tags))].sort((a, b) => a.localeCompare(b, "he"));
+  $("colorList").innerHTML = tags.length ? tags.map(t => `
+    <div class="crow">
+      <span class="${tagClass(t)}">${esc(t)}</span>
+      <div class="sw">
+        ${PALETTE.map(c => `<button type="button" class="c-${c}${tagColor(t) === c ? " on" : ""}"
+            data-t="${esc(t)}" data-c="${c}" aria-label="${c}"></button>`).join("")}
+      </div>
+    </div>`).join("") : '<div class="empty">אין עדיין תגיות</div>';
+}
+$("colorsBtn").onclick = () => { renderColors(); $("colorDlg").showModal(); };
+$("colorDone").onclick = () => $("colorDlg").close();
+$("colorList").addEventListener("click", e => {
+  const b = e.target.closest("[data-c]");
+  if (!b) return;
+  tagColors[b.dataset.t] = b.dataset.c;
+  saveColors(); renderColors(); render();
+});
 
 render();
 </script>
